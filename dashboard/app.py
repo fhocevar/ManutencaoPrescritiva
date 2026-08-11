@@ -90,7 +90,7 @@ with tab_event:
         col3.metric("Similares", result["similar_events_count"])
         col4.metric("Freq./mês", result["frequency_per_month"])
         anomaly = result["anomaly_score"]
-        col5.metric("Anomalia", "N/D" if anomaly is None else f"{anomaly:.2%}")
+        col5.metric("Score de anomalia","N/D" if anomaly is None else f"{anomaly:.2%}")
 
         status = result["recommendation"]["status"]
         if status == "supported":
@@ -110,7 +110,8 @@ with tab_event:
             left, right = st.columns(2)
             with left:
                 counts = similar.groupby(similar["created_at"].dt.to_period("M").astype(str)).size()
-                chart_df = counts.rename("ocorrencias").reset_index(names="mes")
+                chart_df = counts.rename("ocorrencias").reset_index()
+                chart_df.columns = ["mes", "ocorrencias"]
                 st.plotly_chart(px.bar(chart_df, x="mes", y="ocorrencias", title="Distribuição temporal"), use_container_width=True)
             with right:
                 fault_counts = similar.groupby("fault").size().rename("ocorrencias").reset_index()

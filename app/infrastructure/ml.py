@@ -12,12 +12,12 @@ class SklearnSensorModel:
     def __init__(self, artifact_dir: Path) -> None:
         self.artifact_dir = artifact_dir
 
-        scaler_path = artifact_dir / "sensor_scaler.joblib"
+        pipeline_path = artifact_dir / "sensor_pipeline.joblib"
         anomaly_path = artifact_dir / "isolation_forest.joblib"
 
-        self.scaler = (
-            joblib.load(scaler_path)
-            if scaler_path.exists()
+        self.pipeline = (
+            joblib.load(pipeline_path)
+            if pipeline_path.exists()
             else None
         )
 
@@ -29,25 +29,17 @@ class SklearnSensorModel:
 
     @staticmethod
     def _event_frame(event: SensorEvent) -> pd.DataFrame:
-        """
-        Cria um DataFrame contendo exatamente as mesmas colunas usadas
-        durante o treinamento do StandardScaler.
-        """
         return pd.DataFrame(
-            [
-                {
-                    feature: event.metric(feature)
-                    for feature in SENSOR_FEATURES
-                }
-            ],
+            [{
+                feature: event.metric(feature)
+                for feature in SENSOR_FEATURES
+            }],
             columns=list(SENSOR_FEATURES),
             dtype=np.float64,
         )
 
     @staticmethod
-    def _normalize_without_scaler(
-        values: np.ndarray,
-    ) -> np.ndarray:
+    def _normalize_vector(values: np.ndarray) -> np.ndarray:
         norms = np.linalg.norm(
             values,
             axis=1,
@@ -63,26 +55,24 @@ class SklearnSensorModel:
         frame: pd.DataFrame,
     ) -> list[list[float]]:
         """
-        Transforma vários registros de uma vez.
+        Vetorização usada para busca de similaridade no pgvector.
 
-        O DataFrame mantém os nomes e a ordem das features, evitando:
-
-        UserWarning: X does not have valid feature names
+        Mantida compatível com os vetores históricos já armazenados.
         """
-        feature_frame = frame.loc[:, list(SENSOR_FEATURES)].astype(
-            np.float64
-        )
+        feature_frame = frame.loc[
+            :, list(SENSOR_FEATURES)
+        ].astype(np.float64)
 
-        if self.scaler is not None:
-            vectors = self.scaler.transform(feature_frame)
-        else:
-            vectors = self._normalize_without_scaler(
-                feature_frame.to_numpy(dtype=np.float64)
-            )
+        vectors = self._normalize_vector(
+            feature_frame.to_numpy(dtype=np.float64)
+        )
 
         return vectors.astype(float).tolist()
 
-    def transform(self, event: SensorEvent) -> list[float]:
+    def transform(
+        self,
+        event: SensorEvent,
+    ) -> list[float]:
         frame = self._event_frame(event)
         return self.transform_frame(frame)[0]
 
@@ -90,14 +80,20 @@ class SklearnSensorModel:
         self,
         event: SensorEvent,
     ) -> float | None:
-        if self.detector is None or self.scaler is None:
+        """
+        Detecção de anomalia usa exatamente o mesmo pipeline
+        utilizado no treinamento do Isolation Forest:
+        StandardScaler -> PCA -> IsolationForest.
+        """
+        if self.detector is None or self.pipeline is None:
             return None
 
         frame = self._event_frame(event)
-        scaled = self.scaler.transform(frame)
+
+        transformed = self.pipeline.transform(frame)
 
         raw_score = -float(
-            self.detector.score_samples(scaled)[0]
+            self.detector.score_samples(transformed)[0]
         )
 
         score = 1.0 / (
